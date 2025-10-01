@@ -131,4 +131,5 @@ try:
         check_and_alert()
         time.sleep(0.5)
 except KeyboardInterrupt:
-    logging.info("Notifier stopped by user"
+    logging.info("Notifier stopped by user")
+
