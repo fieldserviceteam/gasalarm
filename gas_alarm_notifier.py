@@ -35,6 +35,8 @@ CLEAR_MSG = os.getenv("CLEAR_MSG", "Hydrogen detector returned to normal")
 SEND_CLEAR = os.getenv("SEND_CLEAR", "1") == "1"   # send a 'clear' message?
 LOGFILE = os.getenv("LOGFILE", str(Path.home()/ "gas_alarm_notifier.log"))
 
+EMAIL_TO_LIST = [e.strip() for e in os.getenv("EMAIL_TO_LIST","").replace(";",",").split(",") if e.strip()]
+SMS_GATEWAY_LIST = [e.strip() for e in os.getenv("SMS_GATEWAY_LIST","").replace(";",",").split(",") if e.strip()]
 
 # ----------------------
 # Logging
@@ -59,46 +61,43 @@ def alarm_asserted() -> bool:
 # ----------------------
 # Senders
 # ----------------------
-def send_twilio(text: str):
-    if not (TWILIO_SID and TWILIO_TOKEN and TWILIO_FROM and PHONE_LIST):
-        return False
-    try:
-        client = Client(TWILIO_SID, TWILIO_TOKEN)
-        for num in PHONE_LIST:
-            client.messages.create(to=num, from_=TWILIO_FROM, body=text)
-        logging.info(f"Twilio sent to {len(PHONE_LIST)}")
-        return True
-    except Exception as e:
-        logging.error(f"Twilio error: {e}")
-        return False
+
 def send_email_sms(text: str):
-    if not (SMTP_HOST and SMS_GATEWAY_LIST):
+    if not (SMTP_HOST and (SMS_GATEWAY_LIST or EMAIL_TO_LIST)):
         return False
     try:
-        msg = MIMEText(text)
-        msg["Subject"] = "ALERT"
-        msg["From"] = FROM_EMAIL
-        msg["To"] = ", ".join(SMS_GATEWAY_LIST)
-        context = ssl.create_default_context()
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20) as server:
-            server.starttls(context=context)
-            if SMTP_USER:
-                server.login(SMTP_USER, SMTP_PASS)
-            server.sendmail(FROM_EMAIL, SMS_GATEWAY_LIST, msg.as_string())
-        logging.info(f"Email-to-SMS sent to {len(SMS_GATEWAY_LIST)}")
+        # build recipients
+        sms = [r for r in SMS_GATEWAY_LIST if r.lower().endswith("@vtext.com")]
+        mms = [r for r in SMS_GATEWAY_LIST if not r.lower().endswith("@vtext.com")]  # vzwpix.com or normal emails, etc.
+        cc  = EMAIL_TO_LIST[:]
+
+        # SMS-friendly body (≤160 chars, 7-bit)
+        sms_body = text[:160]
+
+        def _send(to_list, body):
+            if not to_list:
+                return
+            msg = MIMEText(body, _charset="us-ascii")
+            msg["Subject"] = ""                     # IMPORTANT for SMS gateways
+            msg["From"] = FROM_EMAIL
+            msg["To"]   = ", ".join(to_list + cc)
+            with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20) as server:
+                server.starttls(context=ssl.create_default_context())
+                if SMTP_USER:
+                    server.login(SMTP_USER, SMTP_PASS)
+                server.sendmail(FROM_EMAIL, to_list + cc, msg.as_string())
+
+        # try SMS first (fastest), then MMS/CC
+        if sms:
+            _send(sms, sms_body)
+        if mms or cc:
+            _send(mms or cc, text)
+
+        logging.info("Email→SMS sent (sms=%d, mms+cc=%d)", len(sms), len(mms)+len(cc))
         return True
     except Exception as e:
-        logging.error(f"Email SMS error: {e}")
+        logging.error(f"Email SMS error: {e}", exc_info=True)
         return False
-def notify(text: str):
-    stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    payload = f"[{SITE_NAME}] {text} @ {stamp}"
-    ok = send_twilio(payload)
-    if not ok:
-        ok = send_email_sms(payload)
-    if not ok:
-        logging.error("All notification methods failed.")
-    return ok
 # ----------------------
 # Main loop
 # ----------------------
