@@ -143,25 +143,34 @@ def notify(text: str):
 # Main loop
 # ----------------------
 last_alarm_sent = datetime.min
+cooldown_until = datetime.min
 last_state = alarm_asserted()
 logging.info("Initial state: %s", "ALARM" if last_state else "NORMAL")
 
 def check_and_alert():
-    global last_alarm_sent, last_state
+    global last_alarm_sent, last_state, cooldown_until
+    now = datetime.now()
     state = alarm_asserted()
+
     if state != last_state:
+        # state changed
         last_state = state
+
         if state:
-            # Alarm asserted
-            if datetime.now() - last_alarm_sent > timedelta(seconds=MIN_INTERVAL_S):
+            # NORMAL -> ALARM edge: always send once
+            if now >= cooldown_until:
                 notify(ALARM_MSG)
-                last_alarm_sent = datetime.now()
+                last_alarm_sent = now
+                # future ALARM re-triggers (without a clear) are rate-limited
+                cooldown_until = now + timedelta(seconds=MIN_INTERVAL_S)
             else:
-                logging.info("Alarm asserted but in cooldown; no SMS sent.")
+                logging.info("Alarm asserted but in cooldown; no alert sent.")
         else:
-            # Cleared
+            # ALARM -> NORMAL edge
             if SEND_CLEAR:
                 notify(CLEAR_MSG)
+            # reset cooldown so a NEW alarm after a clear always sends
+            cooldown_until = datetime.min
 
 # GPIO callbacks
 button.when_pressed  = lambda: check_and_alert()
