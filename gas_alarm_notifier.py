@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 # ----------------------
 load_dotenv(dotenv_path=Path.home()/".gasalarm.env")
 
+TWILIO_ENABLED = os.getenv("TWILIO_ENABLED", "1") == "1"
 GPIO_PIN       = int(os.getenv("GPIO_PIN", "17"))            # BCM
 ACTIVE_HIGH    = os.getenv("ACTIVE_HIGH", "1") == "1"
 DEBOUNCE_S     = float(os.getenv("DEBOUNCE_S", "0.2"))
@@ -57,6 +58,8 @@ def alarm_asserted() -> bool:
 # Senders
 # ----------------------
 def send_twilio(text: str):
+    if not TWILIO_ENABLED:
+        return False
     if not (TWILIO_SID and TWILIO_TOKEN and TWILIO_FROM and PHONE_LIST):
         return False
     try:
