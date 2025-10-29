@@ -40,6 +40,12 @@ LOGFILE    = os.getenv("LOGFILE", str(Path.home()/ "gas_alarm_notifier.log"))
 # ----------------------
 # Logging
 # ----------------------
+import os, time
+os.environ.setdefault("TZ", "America/Los_Angeles")  # CA local
+try:
+    time.tzset()    # apply TZ on Linux
+except Exception:
+    pass
 logging.basicConfig(filename=LOGFILE, level=logging.INFO,
                     format="%(asctime)s %(levelname)s: %(message)s")
 logging.info("Notifier starting")
@@ -84,26 +90,44 @@ def send_email_sms(text: str):
             if not to_list:
                 return
             msg = MIMEText(body, _charset="us-ascii")
-            msg["Subject"] = ""                       # keep empty for SMS gateways
+            msg["Subject"] = ""                   # empty = more SMS-friendly
             msg["From"] = FROM_EMAIL
-            msg["To"]   = ", ".join(to_list + cc)
+            msg["To"]   = ", ".join(to_list)
             with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20) as server:
                 server.starttls(context=ssl.create_default_context())
                 if SMTP_USER:
                     server.login(SMTP_USER, SMTP_PASS)
-                server.sendmail(FROM_EMAIL, to_list + cc, msg.as_string())
+                server.sendmail(FROM_EMAIL, to_list, msg.as_string())
 
-        # SMS first (≤160 chars), then MMS/CC
+        # If you're not using vtext/vzwpix at all, this will just send EMAILs
+        sent_lists = []
+
         if sms:
             _send(sms, text[:160])
-        if mms or cc:
-            _send(mms or cc, text)
+            sent_lists.append(("sms", sms))
+        if mms:
+            _send(mms, text)
+            sent_lists.append(("mms", mms))
+        if cc:
+            _send(cc, text)
+            sent_lists.append(("email", cc))
 
-        logging.info("Email→SMS sent (sms=%d, mms+cc=%d)", len(sms), len(mms)+len(cc))
+        if not sent_lists:
+            logging.warning("No email recipients configured.")
+            return False
+
+        # Log detail
+        for kind, lst in sent_lists:
+            if kind == "email":
+                logging.info("EMAIL sent to %s | body='%s...'", lst, text[:80])
+            else:
+                logging.info("Email→SMS (%s) sent to %s | body='%s...'", kind, lst, text[:80])
         return True
+
     except Exception as e:
         logging.error("Email SMS error: %s", e, exc_info=True)
         return False
+
 
 def notify(text: str):
     stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
